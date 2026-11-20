@@ -149,8 +149,112 @@ rmse_by_var(fc_var4)
 
 #The VAR(1) is better (lower RMSE) for 7 of the 8 variables, with only VAR(4) having a lower RMSE for inflation. Even though VAR(4) contains VAR(1), the smaller model might forecast better because the VAR(4) has to estimate a lot more coefficients. This leaves room for the extra lags to fit random noise, causing overfitting, which can worsen out-of-sample forecasts. This is a bias-variance tradeoff, where the VAR(1) has more bias but much less variance.
 
+bvar_cv <- function(lambda) {
+  pr <- bv_priors(hyper = "lambda",
+                  mn = bv_mn(lambda = bv_lambda(mode = lambda, sd = 0.4,
+                                                min = 0.999 * lambda,
+                                                max = 1.001 * lambda),
+                             b = 0))
+  fc <- NULL
+  for (T in origins) {
+    fit_T <- bvar(y[1:T, ], lags = 4, priors = pr,
+                  n_draw = 2000, n_burn = 1000, verbose = FALSE)
+    x <- c(1, t(y[T:(T - 3), ]))         # constant and 4 lags of each variable
+    fc <- rbind(fc, x %*% coef(fit_T))   # forecast of y_{T+1}
+  }
+  fc
+}
 
+set.seed(422)
+fc_bvar_03 <- bvar_cv(0.3)
+saveRDS(fc_bvar_03, "results/fc_bvar_03.rds")
 
+set.seed(422)
+fc_bvar_005 <- bvar_cv(0.05)
 
+var_results <- tibble(
+  Variable = colnames(y),
+  `VAR(1)` = rmse_by_var(fc_var1),
+  `VAR(4)` = rmse_by_var(fc_var4),
+  `BVAR(4), lambda = 0.3` = rmse_by_var(fc_bvar_03),
+  `BVAR(4), lambda = 0.05` = rmse_by_var(fc_bvar_005)
+)
+
+saveRDS(var_results, "results/var_results.rds")
+
+var_results |> knitr::kable(digits = 3)
+
+#1 - The BVAR(4) with lambda = 0.3 has a lower RMSE than the VAR(4) for all variables. Despite having the same lags and variables, the BVAR might forecast better because the Minnesota prior shrinkage helps get rid of noise in the coefficient estimates.
+#2 - The BVAR(4) with lambda = 0.3 has a lower RMSE than VAR(1) for inv, infl,  and gs10. For the other variables, BVAR with lambda = 0.3 has a higher RMSE than the VAR(1). These are mixed results, showing that the VAR(1) is hard to beat. 
+#3 - When lambda=0.05, the BVAR(4) has a higher RMSE than BVAR(4) with lambda = 0.3 for 7 of the 8 variables. The only exception is ffr. This tells us that lambda = 0.05 is too much shrinkage, and that the coefficients are shrunk to 0 too much so that they end up ignoring the info in the data. Since having shrinkage did beat the plain OLS VAR(4), we know that no shrinkage is too little, and that the VAR(4) is overfitting. If I used this table to choose my forecasting model, RMSE would not be a fair estimate for forecast accuracy, as it is the RMSE over this particular psuedo-out-of-sample. This means that our winning model wins over the data we have, but might not win over future data, because our winner fits our sample's randomness and noise best. This means the real RMSE of our winning model is likely higher than what the table shows. 
+
+e_var4 <- actual[, "gdp"] - fc_var4[, 1]
+e_bvar <- actual[, "gdp"] - fc_bvar_03[, 1]
+
+forecast::dm.test(e_var4, e_bvar, h = 1, power = 2)
+
+e_var4 <- actual[, "cons"] - fc_var4[, 2]
+e_bvar <- actual[, "cons"] - fc_bvar_03[, 2]
+
+forecast::dm.test(e_var4, e_bvar, h = 1, power = 2)
+
+#From our DM tests, we can conclude that VAR4 is less accurate for GDP than BVAR w lambda=0.3. The DM test stat is 2.1366, which is positive, meaning the errors from VAR4 are larger. This test is signif at the 95% level.
+#From our second DM test, we can conclude that BVAR w lambda=0.3 is more accurate than VAR4 for consumption. The DM test stat is positive again (3.0264), meaning teh errors for VAR4 are larger. This test is signif at the 95% level.
+#This does not change our results in 4.3b because the results are consistent with our findings above. This test does show that the BVAR's lower RMSEs for GDP and Consumption are stat signif and not just luck of fitting to the noise. However, we only tested two variables.
+
+md_raw <- read_csv("data/fredmd_2026-09.csv", show_col_types = FALSE)
+tcode <- unlist(md_raw[1, -1])
+md <- md_raw[-1, ] |> mutate(date = as.Date(sasdate, "%m/%d/%Y"))
+
+transform_series <- function(x, code) {
+  d <- function(v) c(NA, diff(v))
+  switch(as.character(code),
+         "1" = x,                      # level
+         "2" = d(x),                   # first difference
+         "3" = d(d(x)),                # second difference
+         "4" = log(x),                 # log
+         "5" = 100 * d(log(x)),        # growth rate
+         "6" = 100 * d(d(log(x))),     # change in the growth rate
+         "7" = d(x / dplyr::lag(x) - 1))
+}
+
+fm <- map2_dfc(md[names(tcode)], tcode, transform_series) |>
+  mutate(date = md$date, .before = 1) |>
+  filter(date >= as.Date("1960-03-01"), date <= as.Date("2019-12-01"))
+
+fm <- fm[, colSums(is.na(fm)) == 0]
+
+dim(fm)
+
+tcode[c("INDPRO", "PAYEMS", "CPIAUCSL", "FEDFUNDS")]
+
+#INDPRO - The series is transformed as a growth rate, or 100 x change in log.
+#PAYEMS - The series is transformed as a growth rate, or 100 x change in log.
+#CPIAUCSL - The series is transformed as a change in the growth rate.
+#FEDFUNDS - The series is transformed as a first difference, or the change from last month.
+#INDPRO is a total output index, so it gets a growth rate because it grows over time, meaning a growth rate helps make it stationary and more compaable. FEDFUNDS is already a percentage, being the interest rate, and can be near 0 meaning growth rates are not a good measure. Instead, we see the change in perecntage points month to month.
+
+Z <- fm |> select(-date) |> as.matrix()
+
+pc <- prcomp(scale(Z))
+
+summary(pc)$importance[, 1:5]
+
+#The first three factors explain 14.98% (PC1), 7.4%(PC2), and 7.06%(PC3) of the variance.
+#In total, this is 29.44% in total.
+
+F1 <- pc$x[, 1] * sign(cor(pc$x[, 1], fm$INDPRO))
+
+tibble(date = fm$date, F1 = F1) |>
+  ggplot(aes(date, F1)) +
+  geom_line() +
+  labs(title = "First Factor from FRED-MD", x = NULL, y = NULL) +
+  theme_minimal()
+
+sort(abs(cor(pc$x[, 1], Z))[1, ], decreasing = TRUE)[1:8]
+sort(abs(cor(pc$x[, 2], Z))[1, ], decreasing = TRUE)[1:8]
+
+#Factor 1 - real economic activity. The correlated series are things that measure employment and production. The plot confirms this, with drops during recessions, like in 1980 and 2008. It also seems to display business cycles. 
+#Factor 2 - prices/inflation. The correlated series  are all different forms of CPIs.
 
 
