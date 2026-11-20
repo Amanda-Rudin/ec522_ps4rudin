@@ -67,7 +67,20 @@ liquor_cv_fc <- liquor_cv_fit |>
 liquor_cv_fc |>
   accuracy(liquor, measures = list(RMSE = RMSE, MAE = MAE))
 #The first forecast is Jan 2002 (the training sample is 120 months, so Jan 1992-Dec 2001, meaning one month ahead is Jan 2002). The last forecast is Dec 2019, as that is the last data point we have, so the last training sample ends in Nov 2019.
+#The ARIMA model is the most accurate, with the lowest RMSE and MAE. Botg metrics agree - ARIMA has the lowest of both, ETS the next smallest, SNAIVE the largest. 
+
+liquor_errs <- liquor_cv_fc |>
+  as_tibble() |>
+  left_join(as_tibble(liquor) |> select(Month, actual = sales),
+            by = "Month") |>
+  mutate(e = actual - .mean) |>
+  select(Month, .model, e) |>
+  pivot_wider(names_from = .model, values_from = e)
+
+forecast::dm.test(liquor_errs$arima, liquor_errs$ets, h = 1, power = 2)
 
 
+forecast::dm.test(liquor_errs$arima, liquor_errs$snaive, h = 1, power = 2)
 
+#First test (arima v ets) has a DM stat of -2.9062 and a p-value of 0.004042 The second test (arima vs snaive) has a DM stat of -10.755 and a p-value of essentially 0. From this, we can conclude that both tests reject equal accuracy. A DM H0 is that the models are equally accurate, and we reject H0 for both test. We can also conclude that arima is more accurate than ets and snaive, as both DM stats are negative. If I were a liquor store chain, I would use the arima model.   
 
