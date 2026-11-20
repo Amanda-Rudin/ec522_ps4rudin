@@ -57,7 +57,17 @@ liquor_cv <- liquor |>
 liquor_cv_fit <- liquor_cv |>
   model(snaive = SNAIVE(sales),
         ets    = ETS(log(sales)),
-        arima  = ARIMA(log(sales)))
+       arima  = ARIMA(log(sales)))
 
 saveRDS(liquor_cv_fit, "results/liquor_cv_fit.rds")
+#My sample is Jan 1992 to Dec 2019, which is 336 months. Since the first training sample is 120 months, this means there are 216 forecast origins.
+liquor_cv_fc <- liquor_cv_fit |>
+  forecast(h = 1)
+
+liquor_cv_fc |>
+  accuracy(liquor, measures = list(RMSE = RMSE, MAE = MAE))
+#The first forecast is Jan 2002 (the training sample is 120 months, so Jan 1992-Dec 2001, meaning one month ahead is Jan 2002). The last forecast is Dec 2019, as that is the last data point we have, so the last training sample ends in Nov 2019.
+
+
+
 
