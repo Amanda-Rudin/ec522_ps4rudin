@@ -84,3 +84,20 @@ forecast::dm.test(liquor_errs$arima, liquor_errs$snaive, h = 1, power = 2)
 
 #First test (arima v ets) has a DM stat of -2.9062 and a p-value of 0.004042 The second test (arima vs snaive) has a DM stat of -10.755 and a p-value of essentially 0. From this, we can conclude that both tests reject equal accuracy. A DM H0 is that the models are equally accurate, and we reject H0 for both test. We can also conclude that arima is more accurate than ets and snaive, as both DM stats are negative. If I were a liquor store chain, I would use the arima model.   
 
+liquor_combo_fc <- liquor_cv_fit |>
+  mutate(combo = (arima + ets) / 2) |>
+  forecast(h = 1)
+
+liquor_combo_fc |>
+  accuracy(liquor, measures = list(RMSE = RMSE, MAE = MAE))
+
+#Combo has a lower RMSE and MAE that both ets and snaive, but a higher RMSE and MAE than arima.
+
+cor(liquor_errs$arima, liquor_errs$ets)
+
+#The combo did not beat the best individual model. The errors are highly correlated (0.88). This means that arima and ets make similar mistakes. From the DM test, we know that arima is more accurate than ets. This means that combining them will do little to improve model accuracy, as the mistakes are similar and arima is more accurate, and equal weighting gives ets (the less accurate model) equal effect. This weighs down the combination's accuracy.
+
+
+
+
+
